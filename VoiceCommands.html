@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+
+		<title>Simple Web Audio Recorder</title>
+		<style>
+			body 
+			{
+				background: #fff;
+				font-family:Verdana,sans-serif;
+				font-size: 13pt;
+				font-weight: normal;
+			}
+			.displaybox
+			{
+				width: 300px;
+				height: 50px;
+				background-color: #ffffff;
+				border: 2px solid #000000;
+				line-height: 2.5em;
+				margin-top: 25px;
+				font-size: 12pt;
+				font-weight: bold;
+				
+			}
+</style>
+	</head>
+	<body>
+		
+		<div align = "center">
+			<div align = "center" class = "body">
+				<p>Πατήστε record για να ηχογραφήσετε την εντολή και stop recording για να σταματήσετε την ηχογράφηση.</p>
+				<input type = "button" value = "record" id = "rec">
+				<input type = "button" value = "stop recording" id = "stopRec">
+			</div>
+			<p align="center"> Εντολή Χρήστη</p>
+			<div id="result" class="displaybox"> </div>
+			<p align="center"> Αποθηκευμένη Εντολή</p>
+			<div id="command" class="displaybox"> </div>
+			<p align="center"> Ποσοστό Ομοιότητας</p>
+			<div id="percent" class="displaybox"> </div>
+			<form>
+				<input type="radio" id = "en" name="language" value="English" checked> English<br>
+				<input type="radio" id = "el" name="language" value="Greek">Ελληνικά<br>
+			</form> 
+		</div>
+		
+		<script >
+			var audioCntxt;
+			var sampleRate;
+			var recorder = null;
+			var recording = false;
+			var monochannel = [];
+			var recordingLength = 0;
+			var voiceCommand;
+			if (!navigator.getUserMedia)
+			    navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia ||
+		                  navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+			if (navigator.getUserMedia){						// it will be replaced by MediaDevices.getUserMedia()
+			    navigator.getUserMedia({audio:true}, success, function(e) {
+			    alert('Error capturing audio.' + e);
+			    console.log(e);
+			    });
+			} else alert('getUserMedia not supported in this browser.');
+	
+
+			function success(stream)
+			{
+				console.log ("success is enabled");
+				
+				audioCntxt = new (window.AudioContext || window.webkitAudioContext)();
+				//SOS!!!! if i want even smaller file size i can make this smaller. Default value = 44100
+				//but i can do it 16000 with decent results. if u do,remember to change the content type in the php script!!!
+				sampleRate = audioCntxt.sampleRate; 
+				console.log ('sample rate is'+sampleRate);
+				window.source = audioCntxt.createMediaStreamSource(stream);		//in lines 31 - 36 we create
+				var volume = audioCntxt.createGain();							//an audioContext (sth like an Audio canvas)
+				volume.value = 1;												//now we can create nodes like gain (volume.value = volume)
+				window.source.connect(volume);										//here we connect nodes
+																					//window.source is used in firefox only for
+																					//correct recordind. due to a bug.
+				//var	timeoutID = window.setTimeout(timerStop, 5000);				//this is necessary for rec to stop at 5sec
+					
+				var bufferSize = 2048;
+				//creates a script processor node. params are: buffer size, input channels, output channels
+				recorder = audioCntxt.createScriptProcessor(bufferSize, 1, 1); 
+				//every time buffersize fills out, this function is called.
+				//this feature has been marked as deprecated and will be replaced by audio workers.
+				recorder.onaudioprocess = function (e) 
+				{
+					if (!recording) return;
+					var mono =  e.inputBuffer.getChannelData (0);
+					monochannel.push (new Float32Array(mono));
+					recordingLength += bufferSize;
+				};
+				volume.connect(recorder);										//here we connect the recorder
+				recorder.connect(audioCntxt.destination);						//here we connect with the final node (speakers)**
+				//**u can't hear anything from speakers because, i have to send the data to
+				//the output buffer of ScriptProcessorNode. From there the data is despached to the speakers
+				
+				function timerStop()
+				{
+					audioCntxt.close();
+				}
+				
+			}
+			
+			document.getElementById('stopRec').onclick = function()
+			{
+				console.log("recorder stopped");
+				recording = false;
+				var monoBuffer = mergeArrays(monochannel,recordingLength);
+				// we create our wav file
+        		var buffer = new ArrayBuffer(44 + monoBuffer.length*2);
+        		var view = new DataView(buffer);
+        		
+        		// RIFF chunk descriptor
+        		writeLetters(view, 0, 'RIFF');
+        		view.setUint32(4, 44 + monoBuffer.length*2, true);
+        		writeLetters(view, 8, 'WAVE');
+        		// FMT sub-chunk
+        		writeLetters(view, 12, 'fmt ');
+        		view.setUint32(16, 16, true);
+        		view.setUint16(20, 1, true);
+        		// mono (1 channels)
+        		view.setUint16(22, 1, true);
+        		view.setUint32(24, sampleRate, true);
+        		//we use setUint32 or 16 depending on the number of bytes we want to write on the buffer
+        		//32 for 4 bytes 16 for 2 bytes. check canonical wave file format.
+  				view.setUint32(28, sampleRate * 2, true);
+        		view.setUint16(32, 2, true);
+        		view.setUint16(34, 16, true);
+        		// data sub-chunk
+        		writeLetters(view, 36, 'data');
+        		view.setUint32(40, monoBuffer.length*2, true);
+        		
+        		// write the PCM samples
+        		var lng = monoBuffer.length;
+        		var index = 44;
+		        var volume = 1;
+        		for (var i = 0; i<lng; i++)
+        		{
+        			view.setInt16(index, monoBuffer[i] * (0x7FFF *volume), true);
+        		//index is +=2 because, every sample i write has 2bytes 
+				//length (remember i use setInt16, so 16bit) so the offset is 2
+            		index += 2;
+
+     			}
+
+     			// our final binary blob
+       			var blob = new Blob ( [ view ], { type : 'audio/wav' } );
+       			var xhr =new XMLHttpRequest();
+ 				var fd =new FormData();// here we create a formData object for easier creation of key/value pairs. See below
+ 				if (document.getElementById('el').checked)
+ 				{
+ 					fd.append("language","greek");
+ 					console.log ("language is greek");
+ 				}
+ 				else
+ 				{
+ 					fd.append("language","english");
+ 					console.log("language is english");
+ 				}
+ 				fd.append("rec",blob);//we pass the blob with a name "rec"
+ 				fd.append("rate",sampleRate);//we pass the samplerate with a name "rate"
+				xhr.open("POST","phpFiles/upload_raw_wav.php",false);
+				xhr.onreadystatechange = function()
+				{
+					if (xhr.readyState == 4)
+					{
+						console.log ("readyState = 4");
+						if (xhr.status == 200)
+						{
+							console.log("Server returned: ",xhr.responseText);
+							var subStrng = xhr.responseText.substring(14);//with this i delete the 14 first characters of the resposne
+							//i do this to delete a non-whitespace character from the response that couldn't be parsed
+							//either way, the first letters contain an empty response, so it's not important or needed.
+							voiceCommand = JSON.parse(subStrng);
+							document.getElementById("result").innerHTML= voiceCommand.result[0].alternative[0].transcript;
+						}
+					}
+				};
+  				xhr.send(fd);
+  				fd.delete('rec');
+  				fd.delete('rate');
+  				fd.append('voiceCommand',voiceCommand.result[0].alternative[0].transcript);
+  				xhr.open("POST","phpFiles/database_fetch.php",true);
+  				xhr.onreadystatechange = function()
+				{
+					if (xhr.readyState == 4)
+					{
+						console.log ("readyState = 4");
+						if (xhr.status == 200)
+						{
+							console.log("Server returned: ",xhr.responseText);
+							var dbResponse = JSON.parse(xhr.responseText);
+							document.getElementById("command").innerHTML= dbResponse.command;
+							document.getElementById("percent").innerHTML= dbResponse.percentage;
+							console.log(dbResponse.shellExecMessages);
+						}
+					}
+				};
+  				xhr.send(fd);
+
+			};
+			
+			document.getElementById('rec').onclick = function()	// possible issues with different browsers. Check it
+			{
+				console.log ('recording now!');
+				recording = true;
+				monochannel.length =0;
+				
+			};
+			function mergeArrays(channelBuffer, recordingLength)
+			{
+  				var result = new Float32Array(recordingLength);
+				var offset = 0;
+				var lng = channelBuffer.length;
+				for (var i = 0; i < lng; i++)
+				{
+					var buffer = channelBuffer[i];
+					result.set(buffer, offset);
+					offset += buffer.length;	
+				}	
+  				return result;
+			}
+			function writeLetters(view, offset, string)
+			{ 
+				var lng = string.length;
+				for (var i = 0; i < lng; i++)
+				{
+					view.setUint8(offset + i, string.charCodeAt(i));
+				}
+  			}
+			</script>
+	</body>
+</html>
