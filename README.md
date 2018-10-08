@@ -7,6 +7,6 @@ This project transcribes voice files to text using the google speech API. It was
 The user will enter the VoiceCommands.html page and after choosing a preferable language (English by default) 
 presses the record button and issues his command. After the stop record button is pressed, the app will package the user’s voice command into a .wav file using only pure JavaScript. The anatomy of a .wav file is the following:
 
-http://soundfile.sapp.org/doc/WaveFormat/wav-sound-format.gif
+![alt text]( https://github.com/Markos-Vasalos/Voice-Commands/wav-sound-format.gif) 
 
 The file will be sent to the Google’s Speech-to-text API asynchronously using Ajax and curl in the backend. The app receives the transcribed text which is displayed in the text box and then with a second ajax call, calculates the similarity rate with the commands that are stored in the database. If the rate is equal or above 85% the command is been executed. The commands were executed through a raspberry Pi that was controlling the corresponding devices and was also the server on which the application was hosted.
